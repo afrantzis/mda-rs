@@ -1,0 +1,24 @@
+[package]
+name = "mda"
+version = "0.1.0"
+authors = ["Alexandros Frantzis <alf82@freemail.gr>"]
+edition = "2018"
+description = "A library for creating custom Mail Delivery Agents"
+license = "MPL-2.0"
+repository = "https://github.com/afrantzis/mda-rs"
+documentation = "https://docs.rs/mda"
+homepage = "https://github.com/afrantzis/mda-rs"
+readme = "README.md"
+categories = ["email"]
+exclude = ["/.github/**"]
+
+[dependencies]
+regex = "1"
+libc = "0.2"
+gethostname = "0.2"
+memchr = "2.2"
+charset = "0.1"
+lazy_static = "1.4"
+
+[dev-dependencies]
+tempfile = "3"
