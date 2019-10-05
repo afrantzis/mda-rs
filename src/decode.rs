@@ -33,54 +33,84 @@ static BASE64_INDICES: &'static [u8] = &[
 /* F */ INV, INV, INV, INV, INV, INV, INV, INV, INV, INV, INV, INV, INV, INV, INV, INV,
 ];
 
+/// A base64 value.
+enum Base64Value {
+    /// A valid base64 numeric value.
+    Some(u8),
+    /// The pad symbol.
+    Pad,
+    /// No value.
+    None,
+}
+
+/// Returns the value of the next base64 character. Skips invalid
+/// characters (rfc2045: All line breaks or other characters not
+/// found in Table 1 must be ignored by decoding software).
+fn next_valid_base64_value(iter: &mut dyn Iterator<Item=&u8>) -> Base64Value {
+    while let Some(c) = iter.next() {
+        let b = BASE64_INDICES[*c as usize];
+        if b < PAD {
+            return Base64Value::Some(b);
+        }
+        if b == PAD {
+            return Base64Value::Pad;
+        }
+    }
+    return Base64Value::None;
+}
+
 /// Decodes base64 encoded data, appending the decoded data to a Vec<u8>.
 ///
 /// During decoding all line breaks and invalid characters are ignored.
-/// If an error is encountered during decoding, the already decoded data in the
-/// output buffer is left intact. It's up to the caller to deal with the partial
-/// decoded data in case of failure.
+/// Decoding is finished at the first pad character or end of input.  If an
+/// error is encountered during decoding, the already decoded data in the output
+/// buffer is left intact. It's up to the caller to deal with the partial
+/// decoded data in case of failure
 pub fn base64_decode_into_buf(input: &[u8], output: &mut Vec<u8>) -> Result<()> {
-    let mut num_chars = 0;
-    let mut cur_triplet = 0;
-    let mut valid_chars = 0;
+    let mut iter = input.iter();
 
-    for c in input {
-        let ci = BASE64_INDICES[*c as usize];
-        match ci {
-            // rfc2045: All line breaks or other characters not
-            // found in Table 1 must be ignored by decoding software.
-            INV => continue,
-            _ if ci < PAD => valid_chars += 1,
-            _ => {}
+    let expected_paddings =
+        loop {
+            let c0 = match next_valid_base64_value(&mut iter) {
+                Base64Value::Some(c) => c,
+                Base64Value::Pad => return Err("Invalid base64 padding".into()),
+                Base64Value::None => return Ok(()),
+            };
+
+            let c1 = match next_valid_base64_value(&mut iter) {
+                Base64Value::Some(c) => { output.push((c0 << 2) | ((c & 0x3f) >> 4)); c }
+                Base64Value::Pad => return Err("Invalid base64 padding".into()),
+                Base64Value::None => return Err("Invalid base64 encoding".into()),
+            };
+
+            let c2 = match next_valid_base64_value(&mut iter) {
+                Base64Value::Some(c) => { output.push((c1 << 4) | ((c & 0x3f) >> 2)); c }
+                Base64Value::Pad => break 1,
+                Base64Value::None => return Err("Invalid base64 padding".into()),
+            };
+
+            match next_valid_base64_value(&mut iter) {
+                Base64Value::Some(c) => { output.push((c2 << 6) | ((c & 0x3f))); }
+                Base64Value::Pad => break 0,
+                Base64Value::None => return Err("Invalid base64 padding".into()),
+            };
+        };
+
+    let mut found_paddings = 0;
+
+    while let Some(c) = iter.next() {
+        if *c == b'=' {
+            found_paddings += 1;
+            continue;
         }
-
-        cur_triplet = cur_triplet << 6 | ((ci & 0x3f) as u32);
-        num_chars += 1;
-
-        if num_chars == 4 {
-            match valid_chars {
-                2 => output.push((cur_triplet >> 16) as u8),
-                3 => output.extend(
-                    &[(cur_triplet >> 16) as u8, (cur_triplet >> 8) as u8]
-                ),
-                4 => output.extend(
-                    &[(cur_triplet >> 16) as u8,
-                      (cur_triplet >> 8) as u8,
-                      cur_triplet as u8
-                    ]
-                ),
-                _ => return Err("Invalid base64 encoding".into()),
-            }
-
-            cur_triplet = 0;
-            num_chars = 0;
-            valid_chars = 0;
+        let b = BASE64_INDICES[*c as usize];
+        if b < PAD {
+            return Err("Unexpected characters after base64 padding".into());
         }
     }
 
-    // rfc2045: A full encoding quantum is always completed at the end of a body.
-    if num_chars != 0 {
-        return Err("Unpadded input".into());
+    if found_paddings != expected_paddings {
+        return Err("Invalid base64 padding".into());
     }
 
     Ok(())
@@ -182,6 +212,13 @@ mod test_base64 {
     }
 
     #[test]
+    fn decodes_with_ignored_characters() {
+        let mut decoded = Vec::new();
+        assert!(base64_decode_into_buf(" Y\t WJ\njZA=\r\n = ".as_bytes(), &mut decoded).is_ok());
+        assert_eq!(decoded, &[b'a', b'b', b'c', b'd']);
+    }
+
+    #[test]
     fn error_with_invalid_paddings() {
         let mut decoded = Vec::new();
         assert!(base64_decode_into_buf("YWJj====".as_bytes(), &mut decoded).is_err());
@@ -193,6 +230,13 @@ mod test_base64 {
     fn error_with_unpadded_input() {
         let mut decoded = Vec::new();
         assert!(base64_decode_into_buf("YWJjZA=".as_bytes(), &mut decoded).is_err());
+    }
+
+    #[test]
+    fn error_with_characters_after_padding() {
+        let mut decoded = Vec::new();
+        assert!(base64_decode_into_buf("YWJjZA=a".as_bytes(), &mut decoded).is_err());
+        assert!(base64_decode_into_buf("YWJjZA==b=".as_bytes(), &mut decoded).is_err());
     }
 }
 
