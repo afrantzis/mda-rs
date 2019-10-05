@@ -350,7 +350,18 @@ fn decode_text_data_to_buf(
             _ => Err("unknown encoding".into()),
         };
 
-        if result.is_err() {
+        if result.is_ok() {
+            // During decoding the final CRLF/LF in the data may be dropped.
+            // Restore it to ensure that subsequent lines don't get folded
+            // with the decoded data.
+            const CRLF: &[u8] = &[b'\r', b'\n'];
+            const LF: &[u8] = &[b'\n'];
+            if data.ends_with(CRLF) && !out.ends_with(CRLF) {
+                out.extend(CRLF);
+            } else if data.ends_with(LF) && !out.ends_with(LF) {
+                out.extend(LF);
+            }
+        } else {
             out.resize(initial_len, 0);
             should_convert_charset = false;
         }

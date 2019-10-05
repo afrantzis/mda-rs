@@ -106,6 +106,14 @@ fn base64_parts_are_decoded() {
 }
 
 #[test]
+fn base64_boundaries_remain_on_their_own_line() {
+    let email = Email::from_vec(TEST_EMAIL_MULTIPART.to_string().into_bytes()).unwrap();
+
+    assert!(!email.data().search(r"[^\n]--XtT01VFrJIenjlg\+ZCXSSWq4").unwrap());
+    assert!(!email.data().search(r"[^\n]--2c\+OeCbICgJrtINI5EFlsI6G").unwrap());
+}
+
+#[test]
 fn non_text_base64_is_not_decoded() {
     let email = Email::from_vec(TEST_EMAIL_MULTIPART.to_string().into_bytes()).unwrap();
 
