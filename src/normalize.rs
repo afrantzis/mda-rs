@@ -167,10 +167,18 @@ impl<'a> EmailParser<'a> {
     }
 
     fn end_part(&mut self) {
-        self.part_stack.pop();
-        if let Some(part) = self.part_stack.last_mut() {
-            part.subpart_boundary = None;
+        match &self.part_stack.last().unwrap().subpart_boundary {
+            // If last part is top part (i.e., we just had a boundary end line
+            // without a preceding boundary start line) do nothing.
+            Some(b) if b == &self.active_boundary => {},
+            // Otherwise, remove the active part.
+            _ => { self.part_stack.pop(); }
         }
+
+        // Remove boundary info from top part.
+        self.part_stack.last_mut().unwrap().subpart_boundary = None;
+        self.active_boundary.clear();
+
         for p in self.part_stack.iter().rev() {
             if let Some(b) = &p.subpart_boundary {
                 self.active_boundary = b.clone();
@@ -223,9 +231,13 @@ fn slice_trim_end_newline(mut line: &[u8]) -> &[u8] {
 /// Returns whether a line of bytes is a multi-part boundary line for the
 /// specified boundary string.
 fn is_boundary_line(line: &[u8], boundary: &[u8]) -> bool {
-    line.starts_with(b"--") &&
-        !boundary.is_empty() &&
-        line[2..].starts_with(&boundary)
+    if line.starts_with(b"--") && !boundary.is_empty() {
+        let line = slice_trim_end_newline(&line);
+        let line = if line.ends_with(b"--") { &line[..line.len()-2] } else { &line[..] };
+        return line.len() > 2 && &line[2..] == boundary;
+    }
+
+    false
 }
 
 
