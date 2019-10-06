@@ -1,6 +1,6 @@
 [package]
 name = "mda"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Alexandros Frantzis <alf82@freemail.gr>"]
 edition = "2018"
 description = "A library for creating custom Mail Delivery Agents"
