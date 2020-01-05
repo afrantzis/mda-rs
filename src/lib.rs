@@ -228,7 +228,7 @@ impl Email {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_vec(data: Vec<u8>) -> Result<Self> {
-        let (normalized_data, fields) = normalize_email(&data);
+        let (normalized_data, fields) = normalize_email(&data)?;
         let body_index = find_empty_line(&normalized_data).unwrap_or(normalized_data.len());
         let email_filename_gen = Arc::new(Mutex::new(EmailFilenameGenerator::new()));
 
