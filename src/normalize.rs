@@ -24,6 +24,7 @@ use std::borrow::Cow;
 use lazy_static::lazy_static;
 
 use crate::decode::{base64_decode_into_buf, qp_decode_into_buf};
+use crate::Result;
 
 /// An element recognized by the [EmailParser](struct.EmailParser.html).
 enum Element {
@@ -186,23 +187,25 @@ impl<'a> EmailParser<'a> {
         }
     }
 
-    fn update_active_part_from_header_field(&mut self, field: &[u8]) {
+    fn update_active_part_from_header_field(&mut self, field: &[u8]) -> Result<()> {
         let mut part = self.part_stack.last_mut().unwrap();
 
         if let Some(captures) = self.content_encoding_regex.captures(&field) {
             let enc_bytes = captures.get(1).unwrap().as_bytes();
-            part.encoding = Some(std::str::from_utf8(&enc_bytes).unwrap().to_lowercase());
+            part.encoding = Some(std::str::from_utf8(&enc_bytes)?.to_lowercase());
         } else if let Some(captures) = self.boundary_regex.captures(&field) {
             part.subpart_boundary = Some(captures.get(1).unwrap().as_bytes().to_vec());
             self.active_boundary = part.subpart_boundary.as_ref().unwrap().clone();
         }
         else if let Some(captures) = self.content_type_regex.captures(&field) {
             let type_bytes = captures.get(1).unwrap().as_bytes();
-            part.content_type = Some(std::str::from_utf8(&type_bytes).unwrap().to_lowercase());
+            part.content_type = Some(std::str::from_utf8(&type_bytes)?.to_lowercase());
             if let Some(charset) = captures.get(2) {
-                part.charset = Some(std::str::from_utf8(charset.as_bytes()).unwrap().to_lowercase());
+                part.charset = Some(std::str::from_utf8(charset.as_bytes())?.to_lowercase());
             }
         }
+
+        Ok(())
     }
 }
 
@@ -242,9 +245,9 @@ fn is_boundary_line(line: &[u8], boundary: &[u8]) -> bool {
 
 
 impl Iterator for EmailParser<'_> {
-    type Item = Element;
+    type Item = Result<Element>;
 
-    fn next(&mut self) -> Option<Element> {
+    fn next(&mut self) -> Option<Self::Item> {
         let mut inprogress = Vec::new();
         let mut element = None;
 
@@ -260,7 +263,7 @@ impl Iterator for EmailParser<'_> {
                     // Empty lines denote the end of header.
                     b'\n' | b'\r' => {
                         self.in_header = false;
-                        element = Some(Element::Verbatim{data: line.to_vec()});
+                        element = Some(Ok(Element::Verbatim{data: line.to_vec()}));
                         break;
                     },
                     // Lines beginning with are continuation lines.
@@ -291,7 +294,7 @@ impl Iterator for EmailParser<'_> {
                     self.in_header = true;
                 }
 
-                element = Some(Element::Verbatim{data: line.to_vec()});
+                element = Some(Ok(Element::Verbatim{data: line.to_vec()}));
                 break;
             }
 
@@ -321,21 +324,23 @@ impl Iterator for EmailParser<'_> {
             assert!(element.is_none());
 
             if self.in_header {
-                element = Some(Element::HeaderField{data: inprogress});
+                element = Some(Ok(Element::HeaderField{data: inprogress}));
             } else {
                 element = Some(
-                    Element::Body{
+                    Ok(Element::Body{
                         data: inprogress,
                         encoding: self.active_encoding(),
                         content_type: self.active_content_type(),
                         charset: self.active_charset(),
-                    }
+                    })
                 );
             }
         }
 
-        if let Some(Element::HeaderField{data: field}) = element.as_ref() {
-            self.update_active_part_from_header_field(&field);
+        if let Some(Ok(Element::HeaderField{data: field})) = element.as_ref() {
+            if let Err(e) = self.update_active_part_from_header_field(&field) {
+                return Some(Err(e))
+            }
         }
 
         element
@@ -349,7 +354,7 @@ fn decode_text_data_to_buf(
     encoding: Option<&str>,
     charset: Option<&str>,
     mut out: &mut Vec<u8>,
-) {
+) -> Result<()> {
     let should_decode = encoding.is_some();
     let mut should_convert_charset = true;
     let initial_len = out.len();
@@ -377,6 +382,9 @@ fn decode_text_data_to_buf(
             out.resize(initial_len, 0);
             should_convert_charset = false;
         }
+
+        // not sure whether we actually want to return here in case of error
+        let _ = result?;
     }
 
     if out.len() == initial_len {
@@ -392,6 +400,8 @@ fn decode_text_data_to_buf(
             }
         }
     }
+
+    Ok(())
 }
 
 /// Returns whether a byte array slice could contain an MIME encoded-word.
@@ -426,7 +436,7 @@ fn decode_encoded_word_from_captures(caps: &Captures) -> Vec<u8> {
     }
 
     let mut decoded = Vec::new();
-    decode_text_data_to_buf(&data, Some(encoding), Some(&charset), &mut decoded);
+    let _ = decode_text_data_to_buf(&data, Some(encoding), Some(&charset), &mut decoded); // TODO: Ignoring errors here
     decoded
 }
 
@@ -435,7 +445,7 @@ fn decode_encoded_word_from_captures(caps: &Captures) -> Vec<u8> {
 /// See module documentation about what is involved in normalization.
 ///
 /// Returns the normalized data and a map of header field names to values.
-pub fn normalize_email(data: &[u8]) -> (Vec<u8>, HashMap<String, Vec<String>>) {
+pub fn normalize_email(data: &[u8]) -> Result<(Vec<u8>, HashMap<String, Vec<String>>)> {
     lazy_static! {
         static ref ENCODED_WORD_REGEX: Regex =
             RegexBuilder::new(r"=\?([^?]+)\?([^?]+)\?([^? \t]+)\?=")
@@ -451,7 +461,7 @@ pub fn normalize_email(data: &[u8]) -> (Vec<u8>, HashMap<String, Vec<String>>) {
     let mut fields = HashMap::new();
 
     for element in parser {
-        match element {
+        match element? {
             Element::HeaderField{data} => {
                 let initial_len = normalized.len();
 
@@ -471,7 +481,7 @@ pub fn normalize_email(data: &[u8]) -> (Vec<u8>, HashMap<String, Vec<String>>) {
                 let field_str = String::from_utf8_lossy(&normalized[initial_len..]);
                 let field_str = field_str.trim();
                 let mut split = field_str.splitn(2, ':');
-                let name = split.next().map(|n| n.to_lowercase()).unwrap();
+                let name = split.next().map(|n| n.to_lowercase()).ok_or("No name found")?;
                 let value = split.next().unwrap_or("").to_owned();
                 fields.entry(name).or_insert(Vec::new()).push(value);
             },
@@ -486,7 +496,7 @@ pub fn normalize_email(data: &[u8]) -> (Vec<u8>, HashMap<String, Vec<String>>) {
                             &data,
                             encoding.as_ref().map(String::as_str),
                             charset.as_ref().map(String::as_str),
-                            &mut normalized);
+                            &mut normalized)?;
                     }
                 };
             },
@@ -496,5 +506,5 @@ pub fn normalize_email(data: &[u8]) -> (Vec<u8>, HashMap<String, Vec<String>>) {
         }
     }
 
-    (normalized, fields)
+    Ok((normalized, fields))
 }
