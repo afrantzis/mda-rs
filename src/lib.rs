@@ -274,6 +274,10 @@ impl Email {
         self.fields.get(&name.to_lowercase()).map(|v| v[0].as_str())
     }
 
+    pub fn header_keys(&self) -> Vec<&String> {
+        self.fields.keys().collect()
+    }
+
     /// Returns the values from all occurrences of a header field, if present.
     ///
     /// # Example
