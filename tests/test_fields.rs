@@ -133,3 +133,15 @@ fn header_using_crlf() {
          thirsdcc <secondcc@destination.com>"
     );
 }
+
+#[test]
+fn find_all_header_fields() {
+    let email = Email::from_vec(TEST_EMAIL_CRLF.to_string().into_bytes()).unwrap();
+
+    assert!(
+        email.header_field_names()
+            .iter()
+            .all(|name| email.header_field(name).is_some())
+    );
+}
+
