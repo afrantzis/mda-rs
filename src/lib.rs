@@ -274,8 +274,20 @@ impl Email {
         self.fields.get(&name.to_lowercase()).map(|v| v[0].as_str())
     }
 
-    pub fn header_keys(&self) -> Vec<&String> {
-        self.fields.keys().collect()
+    /// Returns all names of header fields found in the Email
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// # use mda::Email;
+    /// let email = Email::from_stdin()?;
+    /// for name in email.header_field_names() {
+    ///     println!("{}: {:?}", name, email.header_field(name));
+    /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn header_field_names(&self) -> Vec<&str> {
+        self.fields.keys().map(::std::ops::Deref::deref).collect()
     }
 
     /// Returns the values from all occurrences of a header field, if present.
